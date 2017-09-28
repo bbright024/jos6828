@@ -58,6 +58,8 @@ int
 mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 {
 	// Your code here.
+	unsigned int i = 0x00646c72;
+	cprintf("H%x Wo%s \n", 57616, &i);
 	return 0;
 }
 
