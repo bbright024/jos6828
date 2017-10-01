@@ -54,10 +54,42 @@ mon_kerninfo(int argc, char **argv, struct Trapframe *tf)
 	return 0;
 }
 
+#define MAX_ARGS 5
+
 int
 mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 {
-	// Your code here.
+        // Your code here.
+	struct Eipdebuginfo einfo;
+	uint32_t *ebp;
+	uint32_t *eip;
+	uint32_t args[MAX_ARGS];
+
+	ebp = (uint32_t *)read_ebp();
+	int i, n;
+	while(ebp){
+		eip = (uint32_t *)(*(ebp + 1));
+		
+		cprintf("ebp %x eip %x args", ebp, eip);
+		for (i = 0; i < MAX_ARGS; i++) {
+			args[i] = (uint32_t)(*(ebp + 2 + i));
+			cprintf(" %08x", args[i]);
+		}
+		cprintf("\n");
+		ebp = (uint32_t *)(*ebp);
+
+		/* backtrace info */
+		debuginfo_eip((uintptr_t)eip, &einfo);
+		n = einfo.eip_fn_namelen;
+		//einfo.eip_line = 10;
+		
+		cprintf("\t%s:%d: %.*s+%d\n", einfo.eip_file, einfo.eip_line, \
+			n, einfo.eip_fn_name, ((uintptr_t)eip - einfo.eip_fn_addr));
+
+
+		
+	}
+	
 	return 0;
 }
 
