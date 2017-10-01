@@ -23,7 +23,7 @@ extern const char __STABSTR_END__[];		// End of string table
 //	The search takes place within the range [*region_left, *region_right].
 //	Thus, to search an entire set of N stabs, you might do:
 //
-//		left = 0;
+//     	left = 0;
 //		right = N - 1;     /* rightmost stab */
 //		stab_binsearch(stabs, &left, &right, type, addr);
 //
@@ -180,7 +180,11 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 	//	which one.
 	// Your code here.
 
+	stab_binsearch(stabs, &lline, &rline, N_SLINE, addr);
 
+	if (lline <= rline) {
+		info->eip_line = stabs[lline].n_value;
+	}
 	// Search backwards from the line number for the relevant filename
 	// stab.
 	// We can't just use the "lfile" stab because inlined functions
