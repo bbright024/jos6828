@@ -58,6 +58,50 @@ static const char *trapname(int trapno)
 	return "(unknown trap)";
 }
 
+void DIVIDE();
+void DEBUG();
+void NMI();
+void BRKPT();
+void OFLOW();
+void BOUND();
+void ILLOP();
+void DEVICE();
+void DBLFLT();
+
+void TSS();
+void SEGNP();
+void STACK();
+void GPFLT();
+void PGFLT();
+
+void FPERR();
+void ALIGN();
+void MCHK();
+void SIMDERR();
+
+void SYSCALL();
+
+void (*handlers[256])(void) = {
+	[T_DIVIDE] DIVIDE,
+	[T_DEBUG]  DEBUG,
+	[T_NMI]    NMI,
+	[T_BRKPT]  BRKPT,
+	[T_OFLOW]  OFLOW,
+	[T_BOUND]  BOUND,
+	[T_ILLOP]  ILLOP,
+	[T_DEVICE] DEVICE,
+	[T_DBLFLT] DBLFLT,
+	[T_TSS]    TSS,
+	[T_SEGNP]  SEGNP,
+	[T_STACK]  STACK,
+	[T_GPFLT]  GPFLT,
+	[T_PGFLT]  PGFLT,
+	[T_FPERR]  FPERR,
+	[T_ALIGN]  ALIGN,
+	[T_MCHK]   MCHK,
+	[T_SIMDERR] SIMDERR,
+	[T_SYSCALL] SYSCALL,
+};
 
 void
 trap_init(void)
@@ -66,6 +110,21 @@ trap_init(void)
 
 	// LAB 3: Your code here.
 
+	//SETGATE(gate, istrap, sel, off, dpl);
+	//istrap = 1(trap/exception) or 0(interrupt)
+	//sel = an executable segment descriptor in gdt
+	//off = point to begin of handler
+	//dpl = priv level, 0 or 3
+	uint32_t i;
+	for (i = 0; i < 256; i++) {
+		if (handlers[i]) {
+			SETGATE(idt[i], 0, GD_KT, handlers[i], 0);
+		}
+      		else
+			SETGATE(idt[i], 0, GD_KT, NULL, 0);
+	}
+	SETGATE(idt[T_BRKPT], 0, GD_KT, BRKPT, 3);
+	SETGATE(idt[T_SYSCALL], 1, GD_KT, SYSCALL, 3);
 	// Per-CPU setup 
 	trap_init_percpu();
 }
@@ -142,8 +201,33 @@ print_regs(struct PushRegs *regs)
 static void
 trap_dispatch(struct Trapframe *tf)
 {
+
 	// Handle processor exceptions.
 	// LAB 3: Your code here.
+	if (tf->tf_trapno == T_PGFLT) {
+		cprintf("PAGE FAULT\n");
+		page_fault_handler(tf);
+		return;
+	}
+		
+
+	if (tf->tf_trapno == T_BRKPT) {
+		cprintf("BREAKPOINT\n");
+		monitor(tf);
+		return;
+	}
+
+	if (tf->tf_trapno == T_SYSCALL) {
+		cprintf("SYSCALL\n");
+		tf->tf_regs.reg_eax = syscall(
+			tf->tf_regs.reg_eax,
+			tf->tf_regs.reg_edx,
+			tf->tf_regs.reg_ecx,
+			tf->tf_regs.reg_ebx,
+			tf->tf_regs.reg_edi,
+			tf->tf_regs.reg_esi);
+		return;
+	}
 
 	// Unexpected trap: The user process or the kernel has a bug.
 	print_trapframe(tf);
@@ -190,6 +274,7 @@ trap(struct Trapframe *tf)
 
 	// Return to the current environment, which should be running.
 	assert(curenv && curenv->env_status == ENV_RUNNING);
+	//panic("end trapdispa");
 	env_run(curenv);
 }
 
@@ -205,6 +290,10 @@ page_fault_handler(struct Trapframe *tf)
 	// Handle kernel-mode page faults.
 
 	// LAB 3: Your code here.
+
+	if (!(tf->tf_cs & 3)) {
+		panic("kernel page fault!");
+	}
 
 	// We've already handled kernel-mode exceptions, so if we get here,
 	// the page fault happened in user mode.
