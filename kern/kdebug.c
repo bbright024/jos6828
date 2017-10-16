@@ -32,7 +32,7 @@ struct UserStabData {
 //	The search takes place within the range [*region_left, *region_right].
 //	Thus, to search an entire set of N stabs, you might do:
 //
-//		left = 0;
+//     	left = 0;
 //		right = N - 1;     /* rightmost stab */
 //		stab_binsearch(stabs, &left, &right, type, addr);
 //
@@ -143,11 +143,37 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 		// Return -1 if it is not.  Hint: Call user_mem_check.
 		// LAB 3: Your code here.
 
+		int perm;
+		perm = PTE_U;
+		
+		if (user_mem_check(curenv, (void *)usd,
+				   sizeof(struct UserStabData), perm) < 0) {
+			cprintf("\n\nHEY HOW ARE YA\n\n");
+			return -1;
+		}
+
+		
 		stabs = usd->stabs;
 		stab_end = usd->stab_end;
+		
+		if (user_mem_check(curenv, (void *)stabs,
+				   (size_t)(stab_end - stabs), perm) < 0) {
+			cprintf("\n\nHEY HOW ARE YA\n\n");
+			return -1;
+		}
+
+		
 		stabstr = usd->stabstr;
 		stabstr_end = usd->stabstr_end;
+		if(user_mem_check(curenv, (void *)stabstr,
+				  (size_t)(stabstr_end - stabstr), perm) < 0 ) {
+			
+			cprintf("\n\nHEY HOW ARE YA\n\n");
+			return -1;
+		}
 
+
+		
 		// Make sure the STABS and string table memory is valid.
 		// LAB 3: Your code here.
 	}
@@ -205,7 +231,11 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 	//	which one.
 	// Your code here.
 
+	stab_binsearch(stabs, &lline, &rline, N_SLINE, addr);
 
+	if (lline <= rline) {
+		info->eip_line = stabs[lline].n_value;
+	}
 	// Search backwards from the line number for the relevant filename
 	// stab.
 	// We can't just use the "lfile" stab because inlined functions
