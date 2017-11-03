@@ -88,6 +88,30 @@ void SIMDERR();
 
 void SYSCALL();
 
+void TIMER();
+
+void KBD();
+void IRQ2();
+void IRQ3();
+
+void SERIAL();
+void IRQ5();
+void IRQ6();
+
+void SPURIOUS();
+void IRQ8();
+void IRQ9();
+void IRQ10();
+void IRQ11();
+void IRQ12();
+void IRQ13();
+
+void IDE();
+void IRQ15();
+
+void ERROR();
+
+void DEFAULT();
 void (*handlers[256])(void) = {
 	[T_DIVIDE] DIVIDE,
 	[T_DEBUG]  DEBUG,
@@ -108,7 +132,33 @@ void (*handlers[256])(void) = {
 	[T_MCHK]   MCHK,
 	[T_SIMDERR] SIMDERR,
 	[T_SYSCALL] SYSCALL,
+	
+	[IRQ_OFFSET + IRQ_TIMER] TIMER,
+	[IRQ_OFFSET + IRQ_KBD]   KBD,
+	[IRQ_OFFSET + 2] IRQ2,
+	[IRQ_OFFSET + 3] IRQ3,
+
+	[IRQ_OFFSET + IRQ_SERIAL] SERIAL,
+	[IRQ_OFFSET + 5] IRQ5,
+	[IRQ_OFFSET + 6] IRQ6,
+	
+	[IRQ_OFFSET + IRQ_SPURIOUS] SPURIOUS,
+	[IRQ_OFFSET + 8] IRQ8,
+	[IRQ_OFFSET + 9] IRQ9,
+	[IRQ_OFFSET + 10] IRQ10,
+	[IRQ_OFFSET + 11] IRQ11,
+	[IRQ_OFFSET + 12] IRQ12,
+	[IRQ_OFFSET + 13] IRQ13,
+	
+	[IRQ_OFFSET + IRQ_IDE]  IDE,
+	[IRQ_OFFSET + 15] IRQ15,
+	
+	[IRQ_OFFSET + IRQ_ERROR] ERROR,
+	
 };
+
+
+
 
 void
 trap_init(void)
@@ -127,11 +177,12 @@ trap_init(void)
 		if (handlers[i]) {
 			SETGATE(idt[i], 0, GD_KT, handlers[i], 0);
 		}
-      		else
-			SETGATE(idt[i], 0, GD_KT, NULL, 0);
+		else
+			SETGATE(idt[i], 0, GD_KT, DEFAULT, 0);
 	}
+
 	SETGATE(idt[T_BRKPT], 0, GD_KT, BRKPT, 3);
-	SETGATE(idt[T_SYSCALL], 1, GD_KT, SYSCALL, 3);
+	SETGATE(idt[T_SYSCALL], 0, GD_KT, SYSCALL, 3);
 	// Per-CPU setup 
 	trap_init_percpu();
 }
@@ -167,18 +218,21 @@ trap_init_percpu(void)
 
 	// Setup a TSS so that we get the right stack
 	// when we trap to the kernel.
-	ts.ts_esp0 = KSTACKTOP;
-	ts.ts_ss0 = GD_KD;
-	ts.ts_iomb = sizeof(struct Taskstate);
+
+	size_t i = thiscpu->cpu_id;
+	
+	thiscpu->cpu_ts.ts_esp0 = KSTACKTOP - ((KSTKSIZE + KSTKGAP) * i);
+	thiscpu->cpu_ts.ts_ss0 = GD_KD;
+	thiscpu->cpu_ts.ts_iomb = sizeof(struct Taskstate);
 
 	// Initialize the TSS slot of the gdt.
-	gdt[GD_TSS0 >> 3] = SEG16(STS_T32A, (uint32_t) (&ts),
-					sizeof(struct Taskstate) - 1, 0);
-	gdt[GD_TSS0 >> 3].sd_s = 0;
+	gdt[(GD_TSS0 >> 3) + i] = SEG16(STS_T32A, (uint32_t) (&(thiscpu->cpu_ts)),
+					sizeof(struct Taskstate), 0);
+	gdt[(GD_TSS0 >> 3) + i].sd_s = 0;
 
 	// Load the TSS selector (like other segment selectors, the
 	// bottom three bits are special; we leave them 0)
-	ltr(GD_TSS0);
+	ltr(GD_TSS0 + (i << 3));
 
 	// Load the IDT
 	lidt(&idt_pd);
@@ -237,20 +291,16 @@ trap_dispatch(struct Trapframe *tf)
 	// Handle processor exceptions.
 	// LAB 3: Your code here.
 	if (tf->tf_trapno == T_PGFLT) {
-		cprintf("PAGE FAULT\n");
 		page_fault_handler(tf);
 		return;
 	}
-		
 
 	if (tf->tf_trapno == T_BRKPT) {
-		cprintf("BREAKPOINT\n");
 		monitor(tf);
 		return;
 	}
 
 	if (tf->tf_trapno == T_SYSCALL) {
-		cprintf("SYSCALL\n");
 		tf->tf_regs.reg_eax = syscall(
 			tf->tf_regs.reg_eax,
 			tf->tf_regs.reg_edx,
@@ -270,9 +320,16 @@ trap_dispatch(struct Trapframe *tf)
 		return;
 	}
 
+
 	// Handle clock interrupts. Don't forget to acknowledge the
 	// interrupt using lapic_eoi() before calling the scheduler!
 	// LAB 4: Your code here.
+
+	if (tf->tf_trapno == IRQ_OFFSET + IRQ_TIMER ) {
+		lapic_eoi();
+		sched_yield();
+		return;
+	}
 
 	// Unexpected trap: The user process or the kernel has a bug.
 	print_trapframe(tf);
@@ -310,8 +367,9 @@ trap(struct Trapframe *tf)
 		// Acquire the big kernel lock before doing any
 		// serious kernel work.
 		// LAB 4: Your code here.
+		lock_kernel();
 		assert(curenv);
-
+		
 		// Garbage collect if current enviroment is a zombie
 		if (curenv->env_status == ENV_DYING) {
 			env_free(curenv);
@@ -400,9 +458,34 @@ page_fault_handler(struct Trapframe *tf)
 	// LAB 4: Your code here.
 
 	// Destroy the environment that caused the fault.
-	cprintf("[%08x] user fault va %08x ip %08x\n",
-		curenv->env_id, fault_va, tf->tf_eip);
-	print_trapframe(tf);
-	env_destroy(curenv);
+	if (curenv->env_pgfault_upcall == 0) {
+		cprintf("[%08x] user fault va %08x ip %08x\n",
+			curenv->env_id, fault_va, tf->tf_eip);
+		print_trapframe(tf);
+		env_destroy(curenv);		
+	}
+	
+	struct UTrapframe *utrap_f;
+	uintptr_t uxstack_top;
+
+	uxstack_top = (tf->tf_esp >= UXSTACKTOP - PGSIZE &&
+		tf->tf_esp < UXSTACKTOP) ?
+		tf->tf_esp - sizeof(struct UTrapframe) - 4:
+		UXSTACKTOP - sizeof(struct UTrapframe);
+
+	user_mem_assert(curenv, (void *)uxstack_top, 1, PTE_U|PTE_W|PTE_P);
+
+	utrap_f = (struct UTrapframe *)uxstack_top;
+	
+	utrap_f->utf_fault_va = fault_va;
+	utrap_f->utf_err = tf->tf_err;
+	utrap_f->utf_regs = tf->tf_regs;
+	utrap_f->utf_eip = tf->tf_eip;
+	utrap_f->utf_eflags = tf->tf_eflags;
+	utrap_f->utf_esp = tf->tf_esp;	
+
+	curenv->env_tf.tf_esp = uxstack_top;
+	curenv->env_tf.tf_eip = (uintptr_t)curenv->env_pgfault_upcall;
+	env_run(curenv);
 }
 

@@ -271,10 +271,12 @@ mem_init(void)
 	//       overwrite memory.  Known as a "guard page".
 	//     Permissions: kernel RW, user NONE
 	// Your code goes here:
-
-	boot_map_region(kern_pgdir, KSTACKTOP-KSTKSIZE, KSTKSIZE,
-			PADDR(bootstack), PTE_P | PTE_W);
-	
+	boot_map_region(kern_pgdir,
+			KSTACKTOP-KSTKSIZE,
+			KSTKSIZE,
+			PADDR(bootstack),
+			PTE_P|PTE_W);
+		
 	//////////////////////////////////////////////////////////////////////
 	// Map all of physical memory at KERNBASE.
 	// Ie.  the VA range [KERNBASE, 2^32) should map to
@@ -287,7 +289,7 @@ mem_init(void)
 	uint32_t top, range;
 	top = (uint32_t) ~0;
 	range = ROUNDUP(top - KERNBASE, PGSIZE);
-	boot_map_region(kern_pgdir, KERNBASE, range, 0, PTE_W);
+	boot_map_region(kern_pgdir, KERNBASE, range, 0, PTE_W|PTE_P);
 
 	// Initialize the SMP-related parts of the memory map
 	mem_init_mp();
@@ -315,8 +317,6 @@ mem_init(void)
 
 	// Some more checks, only possible after kern_pgdir is installed.
 	check_page_installed_pgdir();
-//	cprintf("\nDONE WITH MEMINIT\n\n");
-
 	cprintf("0x%x  0x%x   0x%x\n", top, range, KERNBASE);
 }
 
@@ -343,6 +343,17 @@ mem_init_mp(void)
 	//
 	// LAB 4: Your code here:
 
+	int i;
+
+	for (i = 0; i < NCPU; i++) {
+		boot_map_region(kern_pgdir,
+				KSTACKTOP-((KSTKSIZE+KSTKGAP)*(i+1)) + KSTKSIZE,
+				KSTKSIZE,
+				PADDR(percpu_kstacks[i]),
+				PTE_P|PTE_W);
+		
+
+	}
 }
 
 // --------------------------------------------------------------
@@ -387,11 +398,17 @@ page_init(void)
 	pages[0].pp_link = NULL;
 
 	/* pages to start of IOPHYSMEM */
+	PI *mpentry_pp = pa2page(MPENTRY_PADDR);
 	size_t i;
 	for (i = 1; i < npages_basemem; i++) {
 		pages[i].pp_ref = 0;
-		pages[i].pp_link = page_free_list;
-		page_free_list = &pages[i];
+		if (&pages[i] == mpentry_pp){
+			pages[i].pp_link = NULL;
+		}
+		else {
+			pages[i].pp_link = page_free_list;
+			page_free_list = &pages[i];			
+		}
 	}
 
 	/* now IOPHYSMEM to EXTPHYSMEM pages
@@ -411,6 +428,9 @@ page_init(void)
 		pages[i].pp_link = page_free_list;
 		page_free_list = &pages[i];
 	}
+
+
+	
 }
 
 //
@@ -718,7 +738,21 @@ mmio_map_region(physaddr_t pa, size_t size)
 	// Hint: The staff solution uses boot_map_region.
 	//
 	// Your code here:
-	panic("mmio_map_region not implemented");
+	// Lab 4
+
+	size = ROUNDUP(size, PGSIZE);
+	uintptr_t new_base, old_base;
+	new_base = size + base;
+	old_base = base;
+	
+	if (new_base < MMIOBASE || new_base > MMIOLIM)
+		panic("mmio map overflow");
+
+	boot_map_region(kern_pgdir, base, size, pa, PTE_PCD|PTE_PWT|PTE_W);
+	base = new_base;
+
+	return (void *)old_base;
+
 }
 
 static uintptr_t user_mem_check_addr;
@@ -957,9 +991,6 @@ check_kern_pgdir(void)
 	// check pages array
 	n = ROUNDUP(npages*sizeof(struct PageInfo), PGSIZE);
 	for (i = 0; i < n; i += PGSIZE) {
-//		cprintf("%d  PADDR(pages) + i = 0x%x\n", i, PADDR(pages) + i);
-//		cprintf("checkva2pa of upages + i = 0x%x\n", check_va2pa(pgdir, UPAGES + i));
-		
 		assert(check_va2pa(pgdir, UPAGES + i) == PADDR(pages) + i);
 	}
 		

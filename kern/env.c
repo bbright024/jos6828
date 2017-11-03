@@ -194,11 +194,9 @@ env_setup_vm(struct Env *e)
 
 	p->pp_ref++;
 	e->env_pgdir = (pde_t *)page2kva(p);
-	size_t i;
-	for (i = PDX(UTOP); i < NPDENTRIES; i++) {
-		e->env_pgdir[i] = kern_pgdir[i];
-	}
-//	memcpy(&e->env_pgdir[PDX(UTOP)], &kern_pgdir[PDX(UTOP)], PGSIZE);
+	memcpy(e->env_pgdir, kern_pgdir, PGSIZE);
+	memset(&e->env_pgdir[0], 0, PDX(UTOP));
+
 	// UVPT maps the env's own page table read-only.
 	// Permissions: kernel R, user R
 	e->env_pgdir[PDX(UVPT)] = PADDR(e->env_pgdir) | PTE_P | PTE_U;
@@ -264,6 +262,8 @@ env_alloc(struct Env **newenv_store, envid_t parent_id)
 	// Enable interrupts while in user mode.
 	// LAB 4: Your code here.
 
+	e->env_tf.tf_eflags |= FL_IF;
+
 	// Clear the page fault handler until user installs one.
 	e->env_pgfault_upcall = 0;
 
@@ -317,14 +317,6 @@ region_alloc(struct Env *e, void *va, size_t len)
 		if (!(pp = page_alloc(0)))
 			panic("out of mem for region_alloc");
 		page_insert(e->env_pgdir, pp, curr_va, PTE_W | PTE_U);
-//		curr_pte = pgdir_walk(e->env_pgdir, curr_va, 1);
-		
-
-//		if (curr_pte == NULL)
-//			panic("out of mem for new pde in reg alloc");
-
-//		*curr_pte = PTE_ADDR(page2pa(pp)) | PTE_U | PTE_W | PTE_P;
-//		pp->pp_ref++;
 	}
 }
 
@@ -411,9 +403,7 @@ load_icode(struct Env *e, uint8_t *binary)
 	lcr3(PADDR(kern_pgdir));
 	//now set the entry size in the trapframe
 	e->env_tf.tf_eip = elf_h->e_entry;
-	cprintf("header is 0x%x\n", elf_h->e_entry);
-	cprintf("e->env_tf.tf_eip is 0x%x\n", e->env_tf.tf_eip);
-	
+
 	// Now map one page for the program's initial stack
 	// at virtual address USTACKTOP - PGSIZE.
 
@@ -439,9 +429,6 @@ env_create(uint8_t *binary, enum EnvType type)
 	if (env_alloc(&e, 0) < 0)
 		panic("env_alloc failed, sorry");
 	e->env_type = type;
-	/* TEST CODE */
-//	cprintf("binary = 0x%x\n", binary);
-	/* TEST CODE */
 	load_icode(e, binary);
 
 }
@@ -541,7 +528,6 @@ env_pop_tf(struct Trapframe *tf)
 {
 	// Record the CPU we are running on for user-space debugging
 	curenv->env_cpunum = cpunum();
-
 	asm volatile(
 		"\tmovl %0,%%esp\n"
 		"\tpopal\n"
@@ -581,31 +567,18 @@ env_run(struct Env *e)
 
 	// LAB 3: Your code here.
 
-	if (curenv != e) {
+	if (curenv != e ) {
 		if (curenv != NULL && curenv->env_status == ENV_RUNNING) {
 			curenv->env_status = ENV_RUNNABLE;
-			curenv->env_runs--;
 		}
-			
 		curenv = e;
-		curenv->env_runs++;
-		lcr3(PADDR(e->env_pgdir));	
+		e->env_runs++;
 	}
 	curenv->env_status = ENV_RUNNING;
+	lcr3(PADDR(curenv->env_pgdir));	
+	unlock_kernel();
 
-
-	/* TEST CODE */
-//	cprintf("kernpgdir pa: 0x%x\n", PADDR(kern_pgdir));
-//	cprintf("curenv->pgdir pa: 0x%x\n", PADDR(curenv->env_pgdir));
-//
-//	cprintf("\n");
-	/* END TEST CODE */
-//	panic("env_run not yet implemented");
-//	curenv->env_tf.tf
 	env_pop_tf(&e->env_tf);
-
-
-	
 
 }
 
