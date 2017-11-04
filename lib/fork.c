@@ -75,11 +75,13 @@ duppage(envid_t envid, unsigned pn)
 	pte_t pte;
 	
 	pte = uvpt[pn];
-	perm = pte & 0xfff;
+	perm = pte & PTE_SYSCALL;
+//	if (pte & PTE_W)
+//		perm |= PTE_W;
 	page_va = (void *)(pn * PGSIZE);
 
 	// first check for cow or write
-	if (perm & (PTE_COW | PTE_W)) {
+	if (perm & (PTE_COW | PTE_W) && !(perm & PTE_SHARE)) {
 		perm = PTE_U | PTE_P | PTE_COW;
 		//first create new page in envid
 		if ((r = sys_page_map(0, page_va, envid, page_va, perm)))

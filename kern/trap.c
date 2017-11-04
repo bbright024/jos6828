@@ -111,7 +111,7 @@ void IRQ15();
 
 void ERROR();
 
-void DEFAULT();
+//void DEFAULT();
 void (*handlers[256])(void) = {
 	[T_DIVIDE] DIVIDE,
 	[T_DEBUG]  DEBUG,
@@ -134,7 +134,7 @@ void (*handlers[256])(void) = {
 	[T_SYSCALL] SYSCALL,
 	
 	[IRQ_OFFSET + IRQ_TIMER] TIMER,
-	[IRQ_OFFSET + IRQ_KBD]   KBD,
+	[IRQ_OFFSET + IRQ_KBD]  KBD,
 	[IRQ_OFFSET + 2] IRQ2,
 	[IRQ_OFFSET + 3] IRQ3,
 
@@ -177,12 +177,13 @@ trap_init(void)
 		if (handlers[i]) {
 			SETGATE(idt[i], 0, GD_KT, handlers[i], 0);
 		}
-		else
-			SETGATE(idt[i], 0, GD_KT, DEFAULT, 0);
+//		else
+//			SETGATE(idt[i], 0, GD_KT, NULL, 0);
 	}
 
 	SETGATE(idt[T_BRKPT], 0, GD_KT, BRKPT, 3);
 	SETGATE(idt[T_SYSCALL], 0, GD_KT, SYSCALL, 3);
+//	SETGATE(idt[IRQ_OFFSET + IRQ_KBD], 0,  GD_KT, KBD, 0);
 	// Per-CPU setup 
 	trap_init_percpu();
 }
@@ -287,7 +288,6 @@ print_regs(struct PushRegs *regs)
 static void
 trap_dispatch(struct Trapframe *tf)
 {
-
 	// Handle processor exceptions.
 	// LAB 3: Your code here.
 	if (tf->tf_trapno == T_PGFLT) {
@@ -311,20 +311,11 @@ trap_dispatch(struct Trapframe *tf)
 		return;
 	}
 
-	// Handle spurious interrupts
-	// The hardware sometimes raises these because of noise on the
-	// IRQ line or other reasons. We don't care.
-	if (tf->tf_trapno == IRQ_OFFSET + IRQ_SPURIOUS) {
-		cprintf("Spurious interrupt on irq 7\n");
-		print_trapframe(tf);
-		return;
-	}
 
 
 	// Handle clock interrupts. Don't forget to acknowledge the
 	// interrupt using lapic_eoi() before calling the scheduler!
 	// LAB 4: Your code here.
-
 	if (tf->tf_trapno == IRQ_OFFSET + IRQ_TIMER ) {
 		lapic_eoi();
 		sched_yield();
@@ -334,6 +325,24 @@ trap_dispatch(struct Trapframe *tf)
 	// Handle keyboard and serial interrupts.
 	// LAB 5: Your code here.
 
+	if (tf->tf_trapno == (IRQ_OFFSET + IRQ_KBD)) {
+		kbd_intr();
+		return;
+	}
+
+	if (tf->tf_trapno == (IRQ_OFFSET + IRQ_SERIAL)) {
+		serial_intr();
+		return;
+	}
+	
+	// Handle spurious interrupts
+	// The hardware sometimes raises these because of noise on the
+	// IRQ line or other reasons. We don't care.
+	if (tf->tf_trapno == IRQ_OFFSET + IRQ_SPURIOUS) {
+		cprintf("Spurious interrupt on irq 7\n");
+		print_trapframe(tf);
+		return;
+	}
 
 	// Unexpected trap: The user process or the kernel has a bug.
 	print_trapframe(tf);

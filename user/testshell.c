@@ -36,6 +36,7 @@ umain(int argc, char **argv)
 		wait(r);
 		exit();
 	}
+
 	close(rfd);
 	close(wfd);
 
