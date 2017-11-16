@@ -26,15 +26,30 @@ pgfault(struct UTrapframe *utf)
 
 	// LAB 4: Your code here.
 
+	if (!(err & FEC_WR) || !(uvpd[PDX(addr)] & PTE_P) ||
+	    !(uvpt[PGNUM(addr)] & PTE_COW))
+		panic("pgfault libc err or cow missing");	
+	
 	// Allocate a new page, map it at a temporary location (PFTEMP),
 	// copy the data from the old page to the new page, then move the new
 	// page to the old page's address.
 	// Hint:
 	//   You should make three system calls.
+	
+        // LAB 4: Your code here.
 
-	// LAB 4: Your code here.
+	int perm = PTE_U | PTE_W | PTE_P;
+	
+	if ((r = sys_page_alloc(0, (void *)PFTEMP, perm)))
+		panic("pgfault user: page alloc call");
 
-	panic("pgfault not implemented");
+	void *fault_page = (void *)ROUNDDOWN(addr, PGSIZE);
+	memcpy((void *)PFTEMP, fault_page, PGSIZE);
+
+	if ((r = sys_page_map(0, (void *)PFTEMP, 0, fault_page, perm)))
+		panic("pgfault user: page map call");
+	if ((r = sys_page_unmap(0, (void *)PFTEMP)))
+		panic("pgfault user: page unmap of pftemp call");
 }
 
 //
@@ -54,9 +69,38 @@ duppage(envid_t envid, unsigned pn)
 	int r;
 
 	// LAB 4: Your code here.
-	panic("duppage not implemented");
+
+	int perm;
+	void *page_va;
+	pte_t pte;
+	
+	pte = uvpt[pn];
+	perm = pte & PTE_SYSCALL;
+//	if (pte & PTE_W)
+//		perm |= PTE_W;
+	page_va = (void *)(pn * PGSIZE);
+
+	// first check for cow or write
+	if (perm & (PTE_COW | PTE_W) && !(perm & PTE_SHARE)) {
+		perm = PTE_U | PTE_P | PTE_COW;
+		//first create new page in envid
+		if ((r = sys_page_map(0, page_va, envid, page_va, perm)))
+			return r;
+		//now recreate the page in current env
+		if ((r = sys_page_map(0, page_va, 0, page_va, perm)))
+			return r;
+		return 0;
+	}
+
+	// not a writeable page, just copy it with old perms
+	if ((r = sys_page_map(0, page_va, envid, page_va, perm)))
+		return r;
+	
 	return 0;
 }
+
+// declared for use in fork()
+extern void _pgfault_upcall();
 
 //
 // User-level fork with copy-on-write.
@@ -78,7 +122,46 @@ envid_t
 fork(void)
 {
 	// LAB 4: Your code here.
-	panic("fork not implemented");
+
+	int r;
+	envid_t child_id, parent;
+
+	set_pgfault_handler(pgfault);
+
+	child_id = sys_exofork();
+
+	if (child_id == 0) {
+		// in the child, so change thisenv
+		thisenv = &envs[ENVX(sys_getenvid())];
+		return 0;
+	}		
+
+		
+	// this is the parent env
+	// first copy ALL userspace pages with duppage
+	uintptr_t addr;
+	for (addr = 0; addr < UXSTACKTOP - PGSIZE; addr += PGSIZE) {
+		// check if pgtbl present via uvpd
+		// then check pgtbl entry present and user
+		if ( (uvpd[PDX(addr)] & PTE_P) && (uvpt[PGNUM(addr)] & PTE_P)
+		     && (uvpt[PGNUM(addr)] & PTE_U))
+			duppage(child_id, PGNUM(addr));
+	}
+	
+	// now allocate a page for the child uxstack
+	if ((r = sys_page_alloc(child_id, (void *)(UXSTACKTOP - PGSIZE),
+				PTE_W|PTE_U|PTE_P)))
+		return r;
+
+	// now set the pgfault handler in child
+	if ((r = sys_env_set_pgfault_upcall(child_id, _pgfault_upcall)))
+		return r;
+
+	// now mark as runnable and return childid to parent
+	if ((r = sys_env_set_status(child_id, ENV_RUNNABLE)))
+		return r;
+	return child_id;
+	
 }
 
 // Challenge!
